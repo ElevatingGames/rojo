@@ -267,6 +267,231 @@ pub struct RefPatchResponse<'a> {
     pub patch: SubscribeMessage<'a>,
 }
 
+/// Identifies a request, made by `rojo connect`, for the Studio plugin to
+/// start a sync session.
+pub type ConnectRequestId = uuid::Uuid;
+
+/// Request body for `POST /api/connect`, sent by `rojo connect`.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectRequest {
+    /// Accept any changes to Studio without asking for confirmation.
+    #[serde(default)]
+    pub force: bool,
+
+    /// Only let a Studio window with this place open pick up the request.
+    #[serde(default)]
+    pub place_id: Option<u64>,
+}
+
+/// Response body from `POST /api/connect`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectResponse {
+    pub session_id: SessionId,
+    pub project_name: String,
+
+    /// True if a Studio plugin is already connected, in which case no request
+    /// was created.
+    pub already_connected: bool,
+
+    /// The new request, present unless `already_connected` is true.
+    pub request_id: Option<ConnectRequestId>,
+}
+
+/// Where a connect request is in its lifecycle.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Display, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[strum(serialize_all = "camelCase")]
+pub enum ConnectState {
+    /// Waiting for a Studio plugin to pick up the request.
+    Pending,
+    /// A plugin picked up the request and is connecting.
+    Connecting,
+    /// The plugin found changes it needs confirmation for before syncing.
+    Confirming,
+    /// The plugin connected. This is a final state.
+    Connected,
+    /// The connection was aborted, usually because changes were declined.
+    /// This is a final state.
+    Aborted,
+    /// The plugin failed to connect. This is a final state.
+    Failed,
+    /// `rojo connect` withdrew the request before any plugin picked it up.
+    /// This is a final state.
+    Cancelled,
+}
+
+impl ConnectState {
+    pub fn is_final(self) -> bool {
+        matches!(
+            self,
+            Self::Connected | Self::Aborted | Self::Failed | Self::Cancelled
+        )
+    }
+}
+
+/// The CLI's answer to a confirmation, or the plugin's view of it.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ConnectDecision {
+    Accept,
+    Abort,
+}
+
+/// Describes the changes a plugin would make to Studio when connecting, as
+/// shown on its confirmation page.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeSummary {
+    /// Number of instances that would be added to Studio, counting descendants.
+    #[serde(default)]
+    pub added: u32,
+    /// Number of instances that would be removed from Studio, not counting
+    /// their descendants.
+    #[serde(default)]
+    pub removed: u32,
+    /// Number of instances that would have properties changed in Studio.
+    #[serde(default)]
+    pub updated: u32,
+
+    /// Individual changes, possibly truncated. Added instances are only listed
+    /// at the top of each added subtree.
+    #[serde(default)]
+    pub entries: Vec<ChangeEntry>,
+
+    /// How many entries there were before truncation.
+    #[serde(default)]
+    pub total_entries: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeEntry {
+    pub kind: ChangeKind,
+    /// Full name of the instance, like `ReplicatedStorage.Shared.Module`.
+    pub path: String,
+    #[serde(default)]
+    pub class_name: String,
+    /// For updates, the names of the properties that would change.
+    #[serde(default)]
+    pub properties: Vec<String>,
+    /// For additions and removals, how many descendants come along with it.
+    #[serde(default)]
+    pub descendants: u32,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub enum ChangeKind {
+    Add,
+    Remove,
+    Update,
+}
+
+/// Describes the Studio plugin that picked up a connect request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectPluginInfo {
+    pub place_id: Option<u64>,
+    pub place_name: Option<String>,
+}
+
+/// Response body from `GET /api/connect/{id}` and `POST /api/connect/{id}/cancel`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectStatusResponse {
+    pub request_id: ConnectRequestId,
+    pub state: ConnectState,
+
+    /// Progress text while connecting, or the reason for an abort or failure.
+    pub message: Option<String>,
+
+    /// The changes awaiting confirmation, once the plugin has reported them.
+    pub changes: Option<ChangeSummary>,
+
+    /// The plugin that picked up the request, if any.
+    pub plugin: Option<ConnectPluginInfo>,
+
+    /// Whether the plugin that picked up the request has reported back since.
+    pub plugin_acknowledged: bool,
+
+    /// Seconds since the plugin last contacted the server about this request.
+    pub secs_since_plugin_activity: Option<f64>,
+
+    /// Place IDs of Studio windows that polled for requests while this one was
+    /// pending, but were not allowed to pick it up (because of `--place-id`,
+    /// `servePlaceIds`, or `blockedPlaceIds`).
+    pub ineligible_place_ids: Vec<u64>,
+}
+
+/// Request body for `POST /api/connect/{id}/decision`, sent by `rojo connect`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectDecisionRequest {
+    pub decision: ConnectDecision,
+}
+
+/// Response body from `POST /api/connect/{id}/decision`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectDecisionResponse {
+    /// False if the request was no longer waiting for a decision, for example
+    /// because it was already answered in Studio.
+    pub applied: bool,
+}
+
+/// Request body for `POST /api/connect/poll`, sent by the plugin.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectPollRequest {
+    /// The plugin's place ID. Sent as a string because the plugin's msgpack
+    /// encoder turns integers above 2^32 into floats.
+    pub place_id: Option<String>,
+    pub place_name: Option<String>,
+}
+
+/// Response body from `POST /api/connect/poll`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectPollResponse {
+    /// The request this plugin claimed, or `None` if the poll timed out.
+    pub request: Option<ClaimedConnectRequest>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimedConnectRequest {
+    pub request_id: ConnectRequestId,
+    pub force: bool,
+}
+
+/// Request body for `POST /api/connect/{id}/status`, sent by the plugin.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectStatusUpdate {
+    /// Increases with every update so that updates which arrive out of order
+    /// can be ignored.
+    pub seq: u32,
+    pub state: ConnectState,
+    pub message: Option<String>,
+    pub changes: Option<ChangeSummary>,
+}
+
+/// Response body from `POST /api/connect/{id}/status`.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectStatusUpdateResponse {}
+
+/// Response body from `GET /api/connect/{id}/decision`, polled by the plugin.
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnectDecisionPollResponse {
+    pub state: ConnectState,
+    /// The CLI's decision, or `None` if the poll timed out without one.
+    pub decision: Option<ConnectDecision>,
+}
+
 /// General response type returned from all Rojo routes
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -276,6 +501,14 @@ pub struct ErrorResponse {
 }
 
 impl ErrorResponse {
+    pub fn kind(&self) -> &ErrorResponseKind {
+        &self.kind
+    }
+
+    pub fn details(&self) -> &str {
+        &self.details
+    }
+
     pub fn not_found<S: Into<String>>(details: S) -> Self {
         Self {
             kind: ErrorResponseKind::NotFound,

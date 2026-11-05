@@ -103,6 +103,14 @@ function SettingsPage:render()
 				layoutOrder = layoutIncrement(),
 			}),
 
+			AllowCliConnect = e(Setting, {
+				id = "allowCliConnect",
+				name = "Allow CLI Connect",
+				description = "Let 'rojo connect' start a sync session from the command line. While disconnected, Rojo checks the server for requests.",
+				transparency = self.props.transparency,
+				layoutOrder = layoutIncrement(),
+			}),
+
 			ShowNotifications = e(Setting, {
 				id = "showNotifications",
 				name = "Show Notifications",

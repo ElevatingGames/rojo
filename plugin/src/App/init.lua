@@ -19,6 +19,7 @@ local strict = require(Plugin.strict)
 local Dictionary = require(Plugin.Dictionary)
 local ServeSession = require(Plugin.ServeSession)
 local ApiContext = require(Plugin.ApiContext)
+local CliConnect = require(Plugin.CliConnect)
 local PatchSet = require(Plugin.PatchSet)
 local PatchTree = require(Plugin.PatchTree)
 local preloadAssets = require(Plugin.preloadAssets)
@@ -154,6 +155,8 @@ function App:init()
 				self:checkSyncReminder()
 			end
 		end)
+
+		self:startCliConnectListener()
 	end
 
 	if self:isAutoConnectPlaytestServerAvailable() then
@@ -186,6 +189,7 @@ function App:willUnmount()
 	end
 
 	self:stopSyncReminderPolling()
+	self:stopCliConnectListener()
 
 	self.autoConnectPlaytestServerListener()
 	self:clearRunningConnectionInfo()
@@ -600,10 +604,97 @@ function App:useRunningConnectionInfo()
 	self.setPort(port)
 end
 
-function App:startSession()
+function App:getBaseUrl(): string
+	local host, port = self:getHostAndPort()
+
+	return if string.find(host, "^https?://")
+		then string.format("%s:%s", host, port)
+		else string.format("http://%s:%s", host, port)
+end
+
+--[[
+	Starts listening for `rojo connect` requests from the server the plugin is
+	set to connect to. The listener only polls while no session is active.
+]]
+function App:startCliConnectListener()
+	if self.cliConnectListener ~= nil then
+		return
+	end
+
+	Log.trace("Starting rojo connect listener")
+
+	local token = {}
+	self.cliConnectListener = token
+
+	task.spawn(function()
+		local failures = 0
+
+		while self.cliConnectListener == token do
+			if self.serveSession ~= nil or not Settings:get("allowCliConnect") then
+				task.wait(1)
+				continue
+			end
+
+			local baseUrl = self:getBaseUrl()
+			local success, result = CliConnect.poll(baseUrl):await()
+
+			if self.cliConnectListener ~= token then
+				if success and result ~= nil then
+					CliConnect.Request.new(baseUrl, result):failed("The Rojo plugin was unloaded.")
+				end
+				break
+			end
+
+			if success then
+				failures = 0
+
+				if result ~= nil then
+					self:startCliSession(baseUrl, result)
+				end
+			else
+				failures += 1
+
+				-- Check back quickly while no server is running, so that `rojo
+				-- connect` works soon after `rojo serve` starts. Other errors,
+				-- like a server without `rojo connect` support, are retried less
+				-- often.
+				local delay = if CliConnect.isConnectFailure(result) then math.min(failures, 5) else 15
+				task.wait(delay)
+			end
+		end
+	end)
+end
+
+function App:stopCliConnectListener()
+	if self.cliConnectListener ~= nil then
+		Log.trace("Stopping rojo connect listener")
+		self.cliConnectListener = nil
+	end
+end
+
+function App:startCliSession(baseUrl: string, claim)
+	local cliRequest = CliConnect.Request.new(baseUrl, claim)
+
+	-- Let the CLI know this plugin picked up the request.
+	cliRequest:progress("Studio is preparing to connect...")
+
+	if self.serveSession ~= nil then
+		cliRequest:failed("Studio is already connecting to a Rojo server.")
+		return
+	end
+
+	Log.info("Connecting because 'rojo connect' was run")
+	self:startSession(cliRequest)
+end
+
+function App:startSession(cliRequest)
 	local claimedLock, priorOwner = self:claimSyncLock()
 	if not claimedLock then
 		local msg = string.format("Could not sync because user '%s' is already syncing", tostring(priorOwner))
+
+		if cliRequest then
+			cliRequest:failed(msg)
+		end
 
 		Log.warn(msg)
 		self:addNotification({
@@ -635,6 +726,10 @@ function App:startSession()
 		self:setState({
 			connectingText = text,
 		})
+
+		if cliRequest then
+			cliRequest:progress(text)
+		end
 	end)
 
 	self.cleanupPrecommit = serveSession:hookPrecommit(function(patch, instanceMap)
@@ -689,6 +784,10 @@ function App:startSession()
 			self:setPriorSyncInfo(host, port, details)
 			self:setRunningConnectionInfo(baseUrl)
 
+			if cliRequest then
+				cliRequest:connected(details)
+			end
+
 			local address = ("%s:%s"):format(host, port)
 			self:setState({
 				appStatus = AppStatus.Connected,
@@ -703,6 +802,18 @@ function App:startSession()
 			self.serveSession = nil
 			self:releaseSyncLock()
 			self:clearRunningConnectionInfo()
+
+			-- This only reports anything if the session never finished
+			-- connecting.
+			if cliRequest then
+				if details == nil then
+					cliRequest:aborted("The session was disconnected in Studio before it finished connecting.")
+				elseif tostring(details) == "Aborted Rojo sync operation" then
+					cliRequest:aborted(tostring(details))
+				else
+					cliRequest:failed(tostring(details))
+				end
+			end
 			self:setState({
 				patchData = {
 					patch = PatchSet.newEmpty(),
@@ -741,6 +852,11 @@ function App:startSession()
 	serveSession:setConfirmCallback(function(instanceMap, patch, serverInfo)
 		if PatchSet.isEmpty(patch) then
 			Log.trace("Accepting patch without confirmation because it is empty")
+			return "Accept"
+		end
+
+		if cliRequest and cliRequest.force then
+			Log.trace("Accepting patch without confirmation because 'rojo connect --force' was run")
 			return "Accept"
 		end
 
@@ -821,7 +937,21 @@ function App:startSession()
 			timeout = 7,
 		})
 
-		return self.confirmationEvent:Wait()
+		-- 'rojo connect' can answer too. Whichever is answered first wins.
+		local stopWaitingForCli
+		if cliRequest then
+			stopWaitingForCli = cliRequest:awaitDecision(instanceMap, patch, function(decision)
+				self.confirmationBindable:Fire(decision)
+			end)
+		end
+
+		local decision = self.confirmationEvent:Wait()
+
+		if stopWaitingForCli then
+			stopWaitingForCli()
+		end
+
+		return decision
 	end)
 
 	serveSession:start()

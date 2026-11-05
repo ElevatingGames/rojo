@@ -278,7 +278,7 @@ impl TestServeSession {
     }
 }
 
-fn serialize_msgpack<T: Serialize>(value: T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
+pub fn serialize_msgpack<T: Serialize>(value: T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
     let mut serialized = Vec::new();
     let mut serializer = rmp_serde::Serializer::new(&mut serialized)
         .with_human_readable()

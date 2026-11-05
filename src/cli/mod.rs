@@ -1,6 +1,7 @@
 //! Defines Rojo's CLI through clap types.
 
 mod build;
+mod connect;
 mod doc;
 mod fmt_project;
 mod init;
@@ -17,6 +18,7 @@ use clap::Parser;
 use thiserror::Error;
 
 pub use self::build::BuildCommand;
+pub use self::connect::ConnectCommand;
 pub use self::doc::DocCommand;
 pub use self::fmt_project::FmtProjectCommand;
 pub use self::init::{InitCommand, InitKind};
@@ -43,6 +45,7 @@ impl Options {
         match self.subcommand {
             Subcommand::Init(subcommand) => subcommand.run(),
             Subcommand::Serve(subcommand) => subcommand.run(self.global),
+            Subcommand::Connect(subcommand) => subcommand.run(self.global),
             Subcommand::Build(subcommand) => subcommand.run(),
             Subcommand::Upload(subcommand) => subcommand.run(),
             Subcommand::Sourcemap(subcommand) => subcommand.run(),
@@ -117,6 +120,7 @@ pub struct ColorChoiceParseError {
 pub enum Subcommand {
     Init(InitCommand),
     Serve(ServeCommand),
+    Connect(ConnectCommand),
     Build(BuildCommand),
     Upload(UploadCommand),
     Sourcemap(SourcemapCommand),

@@ -16,6 +16,7 @@ use crate::{
     serve_session::ServeSession,
     snapshot::{InstanceWithMeta, PatchSet, PatchUpdate},
     web::{
+        connect::ConnectBroker,
         interface::{
             ErrorResponse, Instance, MessagesPacket, OpenResponse, ReadResponse,
             ServerInfoResponse, SocketPacket, SocketPacketBody, SocketPacketType, SubscribeMessage,
@@ -31,10 +32,11 @@ use crate::{
 
 pub async fn call(
     serve_session: Arc<ServeSession>,
+    connect_broker: Arc<ConnectBroker>,
     remote_addr: SocketAddr,
     mut request: Request<Body>,
 ) -> Response<Body> {
-    let service = ApiService::new(serve_session, remote_addr);
+    let service = ApiService::new(serve_session, connect_broker, remote_addr);
 
     match (request.method(), request.uri().path()) {
         (&Method::GET, "/api/rojo") => service.handle_api_rojo().await,
@@ -70,13 +72,19 @@ pub async fn call(
 
 pub struct ApiService {
     serve_session: Arc<ServeSession>,
+    connect_broker: Arc<ConnectBroker>,
     remote_addr: SocketAddr,
 }
 
 impl ApiService {
-    pub fn new(serve_session: Arc<ServeSession>, remote_addr: SocketAddr) -> Self {
+    pub fn new(
+        serve_session: Arc<ServeSession>,
+        connect_broker: Arc<ConnectBroker>,
+        remote_addr: SocketAddr,
+    ) -> Self {
         ApiService {
             serve_session,
+            connect_broker,
             remote_addr,
         }
     }
@@ -125,8 +133,14 @@ impl ApiService {
 
         let serve_session = Arc::clone(&self.serve_session);
 
+        // While this subscription is open, `rojo connect` reports that Studio is
+        // already connected.
+        let socket_guard = self.connect_broker.track_socket();
+
         // Spawn a task to handle the WebSocket connection
         tokio::spawn(async move {
+            let _socket_guard = socket_guard;
+
             if let Err(e) =
                 handle_websocket_subscription(serve_session, websocket, input_cursor).await
             {

@@ -4,10 +4,11 @@
 
 mod api;
 mod assets;
+mod connect;
 pub mod interface;
 mod origin;
 mod ui;
-mod util;
+pub(crate) mod util;
 
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -22,6 +23,8 @@ use hyper::{
 use tokio::runtime::Runtime;
 
 use crate::serve_session::ServeSession;
+
+use self::connect::ConnectBroker;
 
 pub struct LiveServer {
     serve_session: Arc<ServeSession>,
@@ -47,16 +50,20 @@ impl LiveServer {
         on_listening: impl FnOnce(),
     ) -> anyhow::Result<()> {
         let serve_session = Arc::clone(&self.serve_session);
+        let connect_broker = Arc::new(ConnectBroker::new());
         let allowed_hosts = origin::allowed_hosts(address.ip(), address.port(), &allowed_hosts);
 
         let make_service = make_service_fn(move |conn: &AddrStream| {
             let serve_session = Arc::clone(&serve_session);
+            let connect_broker = Arc::clone(&connect_broker);
             let allowed_hosts = allowed_hosts.clone();
             let remote_addr = conn.remote_addr();
+            let local_addr = conn.local_addr();
 
             async move {
                 let service = move |req: Request<Body>| {
                     let serve_session = Arc::clone(&serve_session);
+                    let connect_broker = Arc::clone(&connect_broker);
                     let allowed_hosts = allowed_hosts.clone();
 
                     async move {
@@ -68,8 +75,21 @@ impl LiveServer {
                             return Ok::<_, Infallible>(response);
                         }
 
-                        if req.uri().path().starts_with("/api") {
-                            Ok::<_, Infallible>(api::call(serve_session, remote_addr, req).await)
+                        if connect::handles_path(req.uri().path()) {
+                            Ok::<_, Infallible>(
+                                connect::call(
+                                    serve_session,
+                                    connect_broker,
+                                    remote_addr,
+                                    local_addr,
+                                    req,
+                                )
+                                .await,
+                            )
+                        } else if req.uri().path().starts_with("/api") {
+                            Ok::<_, Infallible>(
+                                api::call(serve_session, connect_broker, remote_addr, req).await,
+                            )
                         } else {
                             Ok::<_, Infallible>(ui::call(serve_session, req).await)
                         }

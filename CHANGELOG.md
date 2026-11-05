@@ -31,6 +31,7 @@ Making a new release? Simply add the new header with the version and date undern
 
 ## Unreleased
 
+* Added `rojo connect`, which makes the Studio plugin connect to a running `rojo serve` as if Connect was clicked in Studio. If the plugin would ask for confirmation before syncing, the changes are listed and confirmed in the terminal (or in Studio), and `--force` skips the confirmation. The plugin's new *Allow CLI Connect* setting turns this off.
 * LocalizationTables no longer report as changed when nothing changes. ([#1333])
 * Sounds now preloaded correctly. The warning "*ContentId: rbxassetid://203785492 failed due to: Asset type does not match requested type*" is fixed. ([#1351])
 

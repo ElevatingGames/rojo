@@ -13,6 +13,7 @@ local defaultSettings = {
 	openScriptsExternally = false,
 	twoWaySync = false,
 	autoReconnect = false,
+	allowCliConnect = true,
 	showNotifications = true,
 	enableSyncFallback = true,
 	syncReminderMode = "Notify" :: "None" | "Notify" | "Fullscreen",

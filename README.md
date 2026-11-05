@@ -31,6 +31,27 @@ Rojo also has an optional two-way sync setting in the Studio plugin for syncing 
 
 Some workflows, like fully automatic conversion of every existing game into a Rojo project, are still limited and may require manual project configuration.
 
+## Connecting Studio from the command line
+This fork adds `rojo connect`, which makes the Studio plugin connect to a running `rojo serve`, just like clicking **Connect** in Studio:
+
+```sh
+rojo serve            # in one terminal
+rojo connect          # in another, or from a script or editor task
+```
+
+`rojo connect` reads the address and port from the project in the current directory (or the project path you give it), falling back to `localhost:34872`. The Studio plugin's address and port must point at the same server, as they do for the Connect button.
+
+When connecting would change Studio and the plugin would normally ask for confirmation (see the plugin's *Confirmation Behavior* setting), `rojo connect` lists the changes and asks whether to continue. You can answer in the terminal or in Studio. If there is no terminal to ask in, `rojo connect` does not connect and exits with an error.
+
+| Option | Description |
+|---|---|
+| `-f`, `--force` | Connect without asking, overwriting any changes in Studio. |
+| `--place-id <ID>` | Only connect a Studio window that has this place open. |
+| `--timeout <SECONDS>` | How long to wait for Studio to pick up the request (default 30). |
+| `--address`, `--port` | Override the server address and port. |
+
+This needs the plugin from this build, installed with `rojo plugin install`. While disconnected, the plugin checks the server for `rojo connect` requests. You can turn that off with the plugin's *Allow CLI Connect* setting. Only clients on the same machine as the server can make requests.
+
 ## [Documentation](https://rojo.space/docs)
 Documentation is hosted in the [rojo.space repository](https://github.com/rojo-rbx/rojo.space).
 
