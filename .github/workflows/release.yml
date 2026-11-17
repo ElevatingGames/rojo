@@ -4,6 +4,11 @@ on:
   push:
     tags: ["v*"]
 
+# Creating the release and uploading to it needs write access, which a fork's
+# token doesn't have by default.
+permissions:
+  contents: write
+
 jobs:
   create-release:
     name: Create Release
