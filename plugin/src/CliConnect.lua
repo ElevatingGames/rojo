@@ -194,6 +194,9 @@ function Request.new(baseUrl: string, claim)
 		id = claim.requestId,
 		force = claim.force == true,
 		finished = false,
+		-- Set once the confirmation was answered with "Abort", in Studio or
+		-- by the CLI.
+		declined = false,
 		__seq = 0,
 	}
 

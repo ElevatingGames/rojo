@@ -347,8 +347,8 @@ pub struct ChangeSummary {
     /// Number of instances that would be added to Studio, counting descendants.
     #[serde(default)]
     pub added: u32,
-    /// Number of instances that would be removed from Studio, not counting
-    /// their descendants.
+    /// Number of instances that would be removed from Studio, counting
+    /// descendants.
     #[serde(default)]
     pub removed: u32,
     /// Number of instances that would have properties changed in Studio.
@@ -501,10 +501,6 @@ pub struct ErrorResponse {
 }
 
 impl ErrorResponse {
-    pub fn kind(&self) -> &ErrorResponseKind {
-        &self.kind
-    }
-
     pub fn details(&self) -> &str {
         &self.details
     }

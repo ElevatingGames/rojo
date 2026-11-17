@@ -808,7 +808,7 @@ function App:startSession(cliRequest)
 			if cliRequest then
 				if details == nil then
 					cliRequest:aborted("The session was disconnected in Studio before it finished connecting.")
-				elseif tostring(details) == "Aborted Rojo sync operation" then
+				elseif cliRequest.declined then
 					cliRequest:aborted(tostring(details))
 				else
 					cliRequest:failed(tostring(details))
@@ -947,8 +947,13 @@ function App:startSession(cliRequest)
 
 		local decision = self.confirmationEvent:Wait()
 
-		if stopWaitingForCli then
+		if cliRequest then
 			stopWaitingForCli()
+
+			-- Remembered here rather than recognized from ServeSession's error
+			-- message, so the disconnect an abort causes is reported to the
+			-- CLI as an abort even if that message changes.
+			cliRequest.declined = decision == "Abort"
 		end
 
 		return decision
